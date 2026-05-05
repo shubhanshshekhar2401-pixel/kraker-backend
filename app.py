@@ -13,8 +13,8 @@ CORS(app)
 # ---------------- DEVICE ----------------
 device = torch.device("cpu")
 
-binary_classes = ["crack", "no_crack"]
-multi_classes = ["crazing", "shrinkage", "structural", "thermal"]
+# SINGLE MODEL CLASSES
+classes = ["crazing", "shrinkage", "structural", "thermal"]
 
 # ---------------- TRANSFORM ----------------
 transform = transforms.Compose([
@@ -51,49 +51,40 @@ def predict():
     file = request.files["image"]
 
     try:
+        # Load image
         image = Image.open(BytesIO(file.read())).convert("RGB")
         image = transform(image).unsqueeze(0)
 
-        # -------- LOAD BINARY MODEL (ONLY WHEN NEEDED) --------
-        binary_model = models.resnet18()
-        binary_model.fc = nn.Linear(binary_model.fc.in_features, 2)
-        binary_model.load_state_dict(torch.load("crack_detector.pth", map_location=device))
-        binary_model = binary_model.to(device)
-        binary_model.eval()
+        # -------- LOAD SINGLE MODEL --------
+        model = models.resnet18()
+        model.fc = nn.Linear(model.fc.in_features, 4)
+        model.load_state_dict(torch.load("crack_classifier.pth", map_location=device))
+        model = model.to(device)
+        model.eval()
 
+        # -------- PREDICTION --------
         with torch.no_grad():
-            out = binary_model(image)
+            out = model(image)
             prob = torch.softmax(out, dim=1)
             _, pred = torch.max(out, 1)
+            label = classes[pred.item()]
             confidence = prob[0][pred.item()].item()
 
-        if binary_classes[pred.item()] == "no_crack":
+        # -------- NO CRACK HEURISTIC --------
+        if confidence < 0.5:
             return jsonify({
                 "status": "no_crack",
-                "message": "No crack detected",
+                "message": "No clear crack detected",
                 "confidence": round(confidence * 100, 2)
             })
 
-        # -------- LOAD MULTICLASS MODEL ONLY IF CRACK --------
-        multi_model = models.resnet18()
-        multi_model.fc = nn.Linear(multi_model.fc.in_features, 4)
-        multi_model.load_state_dict(torch.load("crack_classifier.pth", map_location=device))
-        multi_model = multi_model.to(device)
-        multi_model.eval()
-
-        with torch.no_grad():
-            out = multi_model(image)
-            prob = torch.softmax(out, dim=1)
-            _, pred = torch.max(out, 1)
-            crack_type = multi_classes[pred.item()]
-            confidence = prob[0][pred.item()].item()
-
+        # -------- CRACK OUTPUT --------
         return jsonify({
             "status": "crack",
-            "type": crack_type,
+            "type": label,
             "confidence": round(confidence * 100, 2),
-            "cause": causes[crack_type],
-            "fix": fixes[crack_type]
+            "cause": causes[label],
+            "fix": fixes[label]
         })
 
     except Exception as e:
