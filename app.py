@@ -13,19 +13,6 @@ CORS(app)
 # ---------------- DEVICE ----------------
 device = torch.device("cpu")
 
-# ---------------- LOAD MODELS ----------------
-binary_model = models.resnet18()
-binary_model.fc = nn.Linear(binary_model.fc.in_features, 2)
-binary_model.load_state_dict(torch.load("crack_detector.pth", map_location=device))
-binary_model = binary_model.to(device)   # ✅ ADD THIS
-binary_model.eval()
-
-multi_model = models.resnet18()
-multi_model.fc = nn.Linear(multi_model.fc.in_features, 4)
-multi_model.load_state_dict(torch.load("crack_classifier.pth", map_location=device))
-multi_model = multi_model.to(device)     # ✅ ADD THIS
-multi_model.eval()
-
 binary_classes = ["crack", "no_crack"]
 multi_classes = ["crazing", "shrinkage", "structural", "thermal"]
 
@@ -55,6 +42,7 @@ fixes = {
 def home():
     return "Crack Detection API is running"
 
+
 @app.route("/predict", methods=["POST"])
 def predict():
     if "image" not in request.files:
@@ -63,11 +51,16 @@ def predict():
     file = request.files["image"]
 
     try:
-        # Read image from memory (no file saving)
         image = Image.open(BytesIO(file.read())).convert("RGB")
         image = transform(image).unsqueeze(0)
 
-        # -------- BINARY MODEL --------
+        # -------- LOAD BINARY MODEL (ONLY WHEN NEEDED) --------
+        binary_model = models.resnet18()
+        binary_model.fc = nn.Linear(binary_model.fc.in_features, 2)
+        binary_model.load_state_dict(torch.load("crack_detector.pth", map_location=device))
+        binary_model = binary_model.to(device)
+        binary_model.eval()
+
         with torch.no_grad():
             out = binary_model(image)
             prob = torch.softmax(out, dim=1)
@@ -81,7 +74,13 @@ def predict():
                 "confidence": round(confidence * 100, 2)
             })
 
-        # -------- MULTICLASS MODEL --------
+        # -------- LOAD MULTICLASS MODEL ONLY IF CRACK --------
+        multi_model = models.resnet18()
+        multi_model.fc = nn.Linear(multi_model.fc.in_features, 4)
+        multi_model.load_state_dict(torch.load("crack_classifier.pth", map_location=device))
+        multi_model = multi_model.to(device)
+        multi_model.eval()
+
         with torch.no_grad():
             out = multi_model(image)
             prob = torch.softmax(out, dim=1)
@@ -101,6 +100,6 @@ def predict():
         return jsonify({"error": str(e)}), 500
 
 
-# ---------------- RUN (RENDER COMPATIBLE) ----------------
+# ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
